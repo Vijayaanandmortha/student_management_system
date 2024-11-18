@@ -68,7 +68,6 @@ function ViewStudents() {
     section: '',
     group: '',
   });
-  const [loading, setLoading] = useState(true);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [adharSearch, setAdharSearch] = useState('');
@@ -114,10 +113,8 @@ function ViewStudents() {
           ...doc.data()
         }));
         setStudents(studentsData);
-        setLoading(false);
       } catch (error) {
         console.error('Error fetching students:', error);
-        setLoading(false);
       }
     };
 

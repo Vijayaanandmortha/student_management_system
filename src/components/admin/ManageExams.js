@@ -80,11 +80,6 @@ function ManageExams() {
   const [activeExams, setActiveExams] = useState([]);
   const [students, setStudents] = useState([]);
   const [selectedExam, setSelectedExam] = useState('');
-  const [monitorFilters, setMonitorFilters] = useState({
-    class: '',
-    section: '',
-    group: '',
-  });
   const [questions, setQuestions] = useState([
     { type: 'multiple_choice', question: '', options: [''], answer: '', points: 1 },
   ]);
