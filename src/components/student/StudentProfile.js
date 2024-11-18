@@ -15,25 +15,38 @@ import {
   Container
 } from '@mui/material';
 import { auth, db } from '../../firebase/config';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import { 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  doc, 
+  getDoc,
+  onSnapshot,
+  Timestamp 
+} from 'firebase/firestore';
 
 const StudentProfile = () => {
   const [student, setStudent] = useState(null);
   const [examResults, setExamResults] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
+    let unsubscribeResults = null;
+
     const fetchStudentData = async () => {
       try {
         setLoading(true);
+        setError(null);
         const currentUser = auth.currentUser;
         
         if (!currentUser) {
-          console.error('No authenticated user found');
+          setError('No authenticated user found');
           return;
         }
 
-        // Fetch student data using query instead of direct document access
+        // Fetch student data using query
         const studentQuery = query(
           collection(db, 'students'), 
           where('uid', '==', currentUser.uid)
@@ -41,7 +54,7 @@ const StudentProfile = () => {
         const studentSnapshot = await getDocs(studentQuery);
         
         if (studentSnapshot.empty) {
-          console.error('No student document found for user:', currentUser.uid);
+          setError('No student document found');
           return;
         }
 
@@ -49,43 +62,62 @@ const StudentProfile = () => {
         setStudent(studentData);
 
         if (!studentData.mobileNumber) {
-          console.error('Student document does not contain mobileNumber:', studentData);
+          setError('Student document does not contain mobile number');
           return;
         }
 
-        // Fetch exam results
+        // Set up real-time listener for exam results
         const resultsQuery = query(
-          collection(db, 'exam_results'),
+          collection(db, 'examResults'),
           where('studentId', '==', studentData.mobileNumber)
         );
-        const resultsSnapshot = await getDocs(resultsQuery);
-        
-        // Get all exams for additional details
-        const examsSnapshot = await getDocs(collection(db, 'exams'));
-        const examsMap = {};
-        examsSnapshot.forEach(doc => {
-          examsMap[doc.id] = { id: doc.id, ...doc.data() };
-        });
 
-        const results = [];
-        resultsSnapshot.forEach(doc => {
-          const result = doc.data();
-          const exam = examsMap[result.examId];
-          if (exam) {
-            results.push({
-              id: doc.id,
-              ...result,
-              examTitle: exam.title || 'Unknown Exam',
-              resultsReleased: exam.resultsReleased || false,
-              showToStudent: result.showToStudent || false
+        unsubscribeResults = onSnapshot(resultsQuery, async (resultsSnapshot) => {
+          try {
+            // Get all exams for additional details
+            const examsSnapshot = await getDocs(collection(db, 'exams'));
+            const examsMap = {};
+            examsSnapshot.forEach(doc => {
+              examsMap[doc.id] = { id: doc.id, ...doc.data() };
             });
+
+            const results = [];
+            resultsSnapshot.forEach(doc => {
+              const result = doc.data();
+              const exam = examsMap[result.examId];
+              if (exam) {
+                results.push({
+                  id: doc.id,
+                  ...result,
+                  examTitle: exam.title || 'Unknown Exam',
+                  resultsReleased: exam.resultsReleased || false,
+                  showToStudent: result.showToStudent || false,
+                  examEndTime: exam.endTime,
+                  examStatus: exam.status
+                });
+              }
+            });
+
+            // Sort results by submission date (newest first)
+            results.sort((a, b) => {
+              const timeA = a.submitTime?.toDate?.() || new Date(0);
+              const timeB = b.submitTime?.toDate?.() || new Date(0);
+              return timeB - timeA;
+            });
+
+            setExamResults(results);
+          } catch (error) {
+            console.error('Error processing exam results:', error);
+            setError('Error loading exam results');
           }
+        }, (error) => {
+          console.error('Error in exam results listener:', error);
+          setError('Error listening to exam results');
         });
 
-        setExamResults(results);
       } catch (error) {
         console.error('Error fetching student data:', error);
-        // You might want to show an error message to the user here
+        setError('Error loading student data');
       } finally {
         setLoading(false);
       }
@@ -94,12 +126,29 @@ const StudentProfile = () => {
     if (auth.currentUser) {
       fetchStudentData();
     }
+
+    // Cleanup listener
+    return () => {
+      if (unsubscribeResults) {
+        unsubscribeResults();
+      }
+    };
   }, []);
 
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
         <CircularProgress />
+      </Box>
+    );
+  }
+
+  if (error) {
+    return (
+      <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
+        <Typography variant="h6" color="text.secondary">
+          {error}
+        </Typography>
       </Box>
     );
   }
@@ -248,43 +297,60 @@ const StudentProfile = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {examResults.map((result) => (
-                <TableRow key={result.id} hover>
-                  <TableCell>{result.examTitle}</TableCell>
-                  <TableCell>
-                    {result.submitTime?.toDate ? 
-                      new Date(result.submitTime.toDate()).toLocaleDateString() : 
-                      'N/A'
-                    }
-                  </TableCell>
-                  <TableCell>
-                    {result.showToStudent ? (
-                      <Chip
-                        label={result.score >= 40 ? 'Passed' : 'Failed'}
-                        color={result.score >= 40 ? 'success' : 'error'}
-                        size="small"
-                        sx={{ fontWeight: 500 }}
-                      />
-                    ) : (
-                      <Chip
-                        label="Results Coming Soon"
-                        color="warning"
-                        size="small"
-                        sx={{ fontWeight: 500 }}
-                      />
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {result.showToStudent ? (
-                      <Typography fontWeight="500" color={result.score >= 40 ? 'success.main' : 'error.main'}>
-                        {result.score}%
-                      </Typography>
-                    ) : (
-                      '---'
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
+              {examResults.map((result) => {
+                const isExamCompleted = result.status === 'completed' || result.examStatus === 'completed';
+                const canShowResult = result.showToStudent && isExamCompleted;
+                
+                return (
+                  <TableRow key={result.id} hover>
+                    <TableCell>{result.examTitle}</TableCell>
+                    <TableCell>
+                      {result.submitTime?.toDate ? 
+                        new Date(result.submitTime.toDate()).toLocaleDateString() : 
+                        'N/A'
+                      }
+                    </TableCell>
+                    <TableCell>
+                      {isExamCompleted ? (
+                        canShowResult ? (
+                          <Chip
+                            label={result.score >= 40 ? 'Passed' : 'Failed'}
+                            color={result.score >= 40 ? 'success' : 'error'}
+                            size="small"
+                            sx={{ fontWeight: 500 }}
+                          />
+                        ) : (
+                          <Chip
+                            label="Results Coming Soon"
+                            color="warning"
+                            size="small"
+                            sx={{ fontWeight: 500 }}
+                          />
+                        )
+                      ) : (
+                        <Chip
+                          label="Exam in Progress"
+                          color="info"
+                          size="small"
+                          sx={{ fontWeight: 500 }}
+                        />
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {canShowResult ? (
+                        <Typography 
+                          fontWeight="500" 
+                          color={result.score >= 40 ? 'success.main' : 'error.main'}
+                        >
+                          {result.score}%
+                        </Typography>
+                      ) : (
+                        '---'
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
               {examResults.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={4} align="center" sx={{ py: 3 }}>

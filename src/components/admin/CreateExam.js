@@ -25,6 +25,7 @@ const CreateExam = () => {
   const [group, setGroup] = useState('');
   const [questions, setQuestions] = useState([{ 
     question: '', 
+    type: 'multiple_choice',
     options: ['', '', '', ''], 
     answer: '' 
   }]);
@@ -38,22 +39,43 @@ const CreateExam = () => {
     setQuestions(newQuestions);
   };
 
+  const handleTypeChange = (index, value) => {
+    const newQuestions = [...questions];
+    newQuestions[index].type = value;
+    // Reset options and answer when switching types
+    if (value === 'text_input') {
+      newQuestions[index].options = [];
+      newQuestions[index].answer = '';
+    } else {
+      newQuestions[index].options = ['', '', '', ''];
+      newQuestions[index].answer = '';
+    }
+    setQuestions(newQuestions);
+  };
+
   const handleOptionChange = (questionIndex, optionIndex, value) => {
     const newQuestions = [...questions];
-    newQuestions[questionIndex].options[optionIndex] = value;
+    // Convert option to lowercase before saving
+    newQuestions[questionIndex].options[optionIndex] = value.toLowerCase();
     setQuestions(newQuestions);
   };
 
   const handleAnswerChange = (index, value) => {
     const newQuestions = [...questions];
-    newQuestions[index].answer = value;
+    // Convert answer to lowercase before saving
+    newQuestions[index].answer = value.toLowerCase();
     setQuestions(newQuestions);
   };
 
   const addQuestion = () => {
     setQuestions([
       ...questions,
-      { question: '', options: ['', '', '', ''], answer: '' }
+      { 
+        question: '', 
+        type: 'multiple_choice',
+        options: ['', '', '', ''], 
+        answer: '' 
+      }
     ]);
   };
 
@@ -73,10 +95,11 @@ const CreateExam = () => {
             // Validate the JSON structure
             const isValid = jsonData.every(q => 
               q.question && 
-              Array.isArray(q.options) && 
-              q.options.length === 4 &&
-              q.answer &&
-              q.options.includes(q.answer)
+              (q.type === 'multiple_choice' ? 
+                (Array.isArray(q.options) && q.options.length === 4 && q.answer && q.options.includes(q.answer)) 
+                : 
+                (q.answer && typeof q.answer === 'string')
+              )
             );
 
             if (isValid) {
@@ -114,9 +137,13 @@ const CreateExam = () => {
       // Validate all questions
       questions.forEach((q, index) => {
         if (!q.question.trim()) throw new Error(`Question ${index + 1} is empty`);
-        if (q.options.some(opt => !opt.trim())) throw new Error(`All options in question ${index + 1} must be filled`);
-        if (!q.answer.trim()) throw new Error(`Please select an answer for question ${index + 1}`);
-        if (!q.options.includes(q.answer)) throw new Error(`Answer for question ${index + 1} must match one of the options`);
+        if (q.type === 'multiple_choice') {
+          if (q.options.some(opt => !opt.trim())) throw new Error(`All options in question ${index + 1} must be filled`);
+          if (!q.answer.trim()) throw new Error(`Please select an answer for question ${index + 1}`);
+          if (!q.options.includes(q.answer)) throw new Error(`Answer for question ${index + 1} must match one of the options`);
+        } else if (q.type === 'text_input') {
+          if (!q.answer.trim()) throw new Error(`Please enter an answer for question ${index + 1}`);
+        }
       });
 
       // Add to Firestore
@@ -138,7 +165,7 @@ const CreateExam = () => {
       setClass('');
       setSection('');
       setGroup('');
-      setQuestions([{ question: '', options: ['', '', '', ''], answer: '' }]);
+      setQuestions([{ question: '', type: 'multiple_choice', options: ['', '', '', ''], answer: '' }]);
       setSuccess('Exam created successfully!');
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
@@ -274,39 +301,75 @@ const CreateExam = () => {
                     size="small"
                   />
                 </Grid>
-                {q.options.map((option, optionIndex) => (
-                  <Grid item xs={12} sm={6} key={optionIndex}>
-                    <TextField
-                      fullWidth
-                      label={`Option ${optionIndex + 1}`}
-                      value={option}
-                      onChange={(e) => handleOptionChange(questionIndex, optionIndex, e.target.value)}
-                      size="small"
-                    />
-                  </Grid>
-                ))}
                 <Grid item xs={12}>
                   <TextField
-                    fullWidth
                     select
-                    label="Correct Answer"
-                    value={q.answer}
-                    onChange={(e) => handleAnswerChange(questionIndex, e.target.value)}
+                    fullWidth
+                    label="Question Type"
+                    value={q.type || 'multiple_choice'}
+                    onChange={(e) => handleTypeChange(questionIndex, e.target.value)}
                     size="small"
-                    SelectProps={{
-                      native: true,
-                    }}
                   >
-                    <option value="">Select correct answer</option>
-                    {q.options.map((option, index) => (
-                      option && (
-                        <option key={index} value={option}>
-                          {option}
-                        </option>
-                      )
-                    ))}
+                    <option value="multiple_choice">Multiple Choice</option>
+                    <option value="text_input">Text Input</option>
                   </TextField>
                 </Grid>
+                {q.type === 'multiple_choice' ? (
+                  <>
+                    {q.options.map((option, optionIndex) => (
+                      <Grid item xs={12} sm={6} key={optionIndex}>
+                        <TextField
+                          fullWidth
+                          label={`Option ${optionIndex + 1}`}
+                          value={option}
+                          onChange={(e) => handleOptionChange(questionIndex, optionIndex, e.target.value)}
+                          size="small"
+                          helperText="Only lowercase letters are allowed"
+                          inputProps={{
+                            style: { textTransform: 'lowercase' }
+                          }}
+                        />
+                      </Grid>
+                    ))}
+                    <Grid item xs={12}>
+                      <TextField
+                        fullWidth
+                        select
+                        label="Correct Answer"
+                        value={q.answer}
+                        onChange={(e) => handleAnswerChange(questionIndex, e.target.value)}
+                        size="small"
+                        SelectProps={{
+                          native: true,
+                        }}
+                        helperText="Answer will be automatically converted to lowercase"
+                      >
+                        <option value="">Select correct answer</option>
+                        {q.options.map((option, index) => (
+                          option && (
+                            <option key={index} value={option}>
+                              {option}
+                            </option>
+                          )
+                        ))}
+                      </TextField>
+                    </Grid>
+                  </>
+                ) : (
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Correct Answer"
+                      value={q.answer}
+                      onChange={(e) => handleAnswerChange(questionIndex, e.target.value)}
+                      size="small"
+                      helperText="Only lowercase letters are allowed"
+                      inputProps={{
+                        style: { textTransform: 'lowercase' }
+                      }}
+                    />
+                  </Grid>
+                )}
               </Grid>
             </Paper>
           ))}

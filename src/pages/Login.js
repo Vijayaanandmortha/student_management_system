@@ -61,7 +61,7 @@ function Login() {
         const studentDocs = await getDocs(studentQuery);
 
         if (!studentDocs.empty) {
-          navigate('/student/dashboard');
+          navigate('/student/profile');
         } else {
           setError('Not authorized as student');
           await auth.signOut();

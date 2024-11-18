@@ -3,17 +3,14 @@ import {
   Paper,
   TextField,
   Button,
-  Grid,
+  Box,
   Typography,
-  Alert,
-  MenuItem,
+  Grid,
   FormControl,
   InputLabel,
   Select,
+  MenuItem,
   IconButton,
-  Tab,
-  Tabs,
-  Box,
   Table,
   TableBody,
   TableCell,
@@ -22,10 +19,15 @@ import {
   TableRow,
   Chip,
   Dialog,
+  Tab,
+  Tabs,
+  Alert,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import StopIcon from '@mui/icons-material/Stop';
+import EditIcon from '@mui/icons-material/Edit';
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { useFormik } from 'formik';
 import * as yup from 'yup';
 import { db } from '../../firebase/config';
@@ -39,7 +41,8 @@ import {
   doc,
   deleteDoc,
   Timestamp,
-  onSnapshot
+  onSnapshot,
+  writeBatch
 } from 'firebase/firestore';
 import { 
   CLASS_OPTIONS, 
@@ -100,24 +103,18 @@ function ManageExams() {
         setStudents(studentsData);
 
         // Fetch all exams
-        const examsSnapshot = await getDocs(collection(db, 'exams'));
-        const examsData = examsSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        }));
-        setExams(examsData);
+        fetchExams();
 
         // Set up real-time listener for exam results
-        const unsubscribe = onSnapshot(
-          collection(db, 'exam_results'),
-          (snapshot) => {
-            const results = snapshot.docs.map(doc => ({
-              id: doc.id,
-              ...doc.data()
-            }));
-            setExamResults(results);
-          }
-        );
+        const resultsQuery = query(collection(db, 'examResults'));
+        const unsubscribe = onSnapshot(resultsQuery, (snapshot) => {
+          const resultsData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            submitTime: doc.data().submitTime || null // Ensure submitTime exists
+          }));
+          setExamResults(resultsData);
+        });
 
         return () => unsubscribe();
       } catch (error) {
@@ -128,6 +125,25 @@ function ManageExams() {
 
     fetchData();
   }, []);
+
+  const fetchExams = async () => {
+    try {
+      // Fetch all exams
+      const examsSnapshot = await getDocs(collection(db, 'exams'));
+      const examsData = examsSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      // Split exams into active and all exams
+      const active = examsData.filter(exam => exam.status === 'active');
+      setActiveExams(active);
+      setExams(examsData);
+    } catch (error) {
+      console.error('Error fetching exams:', error);
+      setError('Failed to fetch exams');
+    }
+  };
 
   // Fetch active exams - Split into two queries to avoid composite index requirement
   useEffect(() => {
@@ -563,6 +579,38 @@ function ManageExams() {
                     Not Attempted: {notAttendedStudents.length}
                   </Typography>
                 </Grid>
+                <Grid item xs={12}>
+                  <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+                    {activeExams.some(exam => exam.id === selectedExam) ? (
+                      <Button
+                        variant="contained"
+                        color="warning"
+                        disabled
+                      >
+                        Exam is going now
+                      </Button>
+                    ) : (
+                      <>
+                        <Button
+                          variant="contained"
+                          color="primary"
+                          startIcon={<EditIcon />}
+                          onClick={() => handleEditTest(selectedExam)}
+                        >
+                          Edit Test Details
+                        </Button>
+                        <Button
+                          variant="contained"
+                          color="secondary"
+                          startIcon={<RestartAltIcon />}
+                          onClick={() => handleReconductTest(selectedExam)}
+                        >
+                          Reconduct Test
+                        </Button>
+                      </>
+                    )}
+                  </Box>
+                </Grid>
               </Grid>
             </Paper>
 
@@ -601,7 +649,7 @@ function ManageExams() {
                             />
                           </TableCell>
                           <TableCell>
-                            {result?.submitTime ? new Date(result.submitTime.toDate()).toLocaleString() : 'N/A'}
+                            {result?.submitTime?.toDate ? new Date(result.submitTime.toDate()).toLocaleString() : 'N/A'}
                           </TableCell>
                         </TableRow>
                       );
@@ -722,6 +770,14 @@ function ManageExams() {
   };
 
   const renderResults = () => {
+    const filteredResults = examResults
+      .filter(result => result.examId === selectedExam)
+      .map(result => ({
+        ...result,
+        submitTime: result.submitTime || null,
+        score: result.score || 0
+      }));
+
     return (
       <>
         <Grid container spacing={2} sx={{ mb: 3 }}>
@@ -752,12 +808,12 @@ function ManageExams() {
                     Exam Details
                   </Typography>
                   <Typography variant="body1">
-                    Title: {exams.find(exam => exam.id === selectedExam)?.title}
+                    Title: {exams.find(exam => exam.id === selectedExam)?.title || 'N/A'}
                   </Typography>
                   <Typography variant="body1">
-                    Class: {exams.find(exam => exam.id === selectedExam)?.class} | 
-                    Section: {exams.find(exam => exam.id === selectedExam)?.section} | 
-                    Group: {exams.find(exam => exam.id === selectedExam)?.group}
+                    Class: {exams.find(exam => exam.id === selectedExam)?.class || 'N/A'} | 
+                    Section: {exams.find(exam => exam.id === selectedExam)?.section || 'N/A'} | 
+                    Group: {exams.find(exam => exam.id === selectedExam)?.group || 'N/A'}
                   </Typography>
                 </Grid>
                 <Grid item xs={12} md={6}>
@@ -765,16 +821,16 @@ function ManageExams() {
                     Results Summary
                   </Typography>
                   <Typography variant="body1">
-                    Total Students: {examResults.filter(r => r.examId === selectedExam).length}
+                    Total Students: {filteredResults.length}
                   </Typography>
                   <Typography variant="body1">
                     Average Score: {
-                      Math.round(
-                        examResults
-                          .filter(r => r.examId === selectedExam)
-                          .reduce((sum, r) => sum + r.score, 0) / 
-                        examResults.filter(r => r.examId === selectedExam).length
-                      ) || 0
+                      filteredResults.length > 0
+                        ? Math.round(
+                            filteredResults.reduce((sum, r) => sum + (r.score || 0), 0) / 
+                            filteredResults.length
+                          )
+                        : 0
                     }%
                   </Typography>
                 </Grid>
@@ -792,24 +848,33 @@ function ManageExams() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {examResults
-                    .filter(result => result.examId === selectedExam)
-                    .map((result) => (
-                      <TableRow key={result.id}>
-                        <TableCell>{result.studentName}</TableCell>
-                        <TableCell>{result.score}%</TableCell>
-                        <TableCell>
-                          <Chip 
-                            label={result.score >= 40 ? 'Passed' : 'Failed'}
-                            color={result.score >= 40 ? 'success' : 'error'}
-                            size="small"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          {new Date(result.submitTime.toDate()).toLocaleString()}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                  {filteredResults.map((result) => (
+                    <TableRow key={result.id}>
+                      <TableCell>{result.studentName || 'N/A'}</TableCell>
+                      <TableCell>{result.score || 0}%</TableCell>
+                      <TableCell>
+                        <Chip 
+                          label={result.score >= 40 ? 'Passed' : 'Failed'}
+                          color={result.score >= 40 ? 'success' : 'error'}
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {result.submitTime?.toDate ? 
+                          new Date(result.submitTime.toDate()).toLocaleString() 
+                          : 'N/A'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {filteredResults.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={4} align="center">
+                        <Typography color="text.secondary">
+                          No results available for this exam
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -820,26 +885,42 @@ function ManageExams() {
                 color="primary"
                 onClick={async () => {
                   try {
-                    // Get all results for this exam
-                    const examResultsToUpdate = examResults.filter(r => r.examId === selectedExam);
+                    // Get all results for this exam with validation
+                    const examResultsToUpdate = filteredResults.filter(r => r.id);
                     
-                    // Update each result
-                    for (const result of examResultsToUpdate) {
-                      await updateDoc(doc(db, 'exam_results', result.id), {
-                        showToStudent: true
-                      });
+                    if (examResultsToUpdate.length === 0) {
+                      setError('No valid results to update');
+                      return;
                     }
 
-                    // Update the exam to mark results as released
-                    await updateDoc(doc(db, 'exams', selectedExam), {
+                    // Create a batch for atomic updates
+                    const batch = writeBatch(db);
+
+                    // First update the exam document to mark it as completed and released
+                    const examRef = doc(db, 'exams', selectedExam);
+                    batch.update(examRef, {
+                      status: 'completed',
                       resultsReleased: true,
-                      releaseDate: new Date()
+                      releaseDate: Timestamp.now()
                     });
+
+                    // Then update all individual results
+                    examResultsToUpdate.forEach(result => {
+                      const resultRef = doc(db, 'examResults', result.id);
+                      batch.update(resultRef, {
+                        showToStudent: true,
+                        releaseDate: Timestamp.now(),
+                        status: 'completed'
+                      });
+                    });
+
+                    // Commit the batch
+                    await batch.commit();
 
                     setSuccess('Results released successfully');
                   } catch (error) {
                     console.error('Error releasing results:', error);
-                    setError('Failed to release results');
+                    setError('Failed to release results. Please try again.');
                   }
                 }}
               >
@@ -850,6 +931,65 @@ function ManageExams() {
         )}
       </>
     );
+  };
+
+  const handleEditTest = async (examId) => {
+    try {
+      const examToEdit = exams.find(exam => exam.id === examId);
+      if (!examToEdit) {
+        setError('Exam not found');
+        return;
+      }
+
+      // Set form values for editing
+      formik.setValues({
+        title: examToEdit.title,
+        class: examToEdit.class,
+        section: examToEdit.section,
+        group: examToEdit.group,
+        duration: examToEdit.duration,
+        expiryDate: examToEdit.endTime.toDate().toISOString().split('T')[0],
+      });
+      setQuestions(examToEdit.questions);
+      
+      // Switch to create exam tab for editing
+      setTabValue(0);
+      setSuccess('Loaded exam details for editing. Make your changes and save.');
+    } catch (error) {
+      console.error('Error loading exam for edit:', error);
+      setError('Failed to load exam for editing');
+    }
+  };
+
+  const handleReconductTest = async (examId) => {
+    try {
+      const examToReconduct = exams.find(exam => exam.id === examId);
+      if (!examToReconduct) {
+        setError('Exam not found');
+        return;
+      }
+
+      // Create a new exam with the same details but new timestamps
+      const newExamData = {
+        ...examToReconduct,
+        status: 'active',
+        createdAt: Timestamp.now(),
+        endTime: Timestamp.fromDate(new Date(Date.now() + 24 * 60 * 60 * 1000)), // 24 hours from now
+      };
+
+      // Remove the id to create a new document
+      delete newExamData.id;
+
+      // Add the new exam to Firebase
+      await addDoc(collection(db, 'exams'), newExamData);
+      setSuccess('Exam reconducted successfully. The new exam is now active.');
+
+      // Refresh the exams list
+      fetchExams();
+    } catch (error) {
+      console.error('Error reconducting exam:', error);
+      setError('Failed to reconduct exam');
+    }
   };
 
   return (

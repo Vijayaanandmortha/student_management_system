@@ -6,26 +6,22 @@ import {
   Avatar,
   Grid,
   Divider,
-  List,
-  ListItem,
-  ListItemText,
   CircularProgress,
   Alert
 } from '@mui/material';
-import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db, auth } from '../../firebase';
 
 const Profile = () => {
   const [userProfile, setUserProfile] = useState(null);
-  const [recentResults, setRecentResults] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetchProfileAndResults();
+    fetchProfile();
   }, []);
 
-  const fetchProfileAndResults = async () => {
+  const fetchProfile = async () => {
     try {
       const user = auth.currentUser;
       if (!user) {
@@ -34,32 +30,19 @@ const Profile = () => {
         return;
       }
 
-      // Fetch user profile
-      const usersRef = collection(db, 'users');
-      const userQuery = query(usersRef, where('uid', '==', user.uid));
-      const userSnapshot = await getDocs(userQuery);
+      // Fetch student profile
+      const studentsRef = collection(db, 'students');
+      const studentQuery = query(studentsRef, where('uid', '==', user.uid));
+      const studentSnapshot = await getDocs(studentQuery);
       
-      if (!userSnapshot.empty) {
-        setUserProfile(userSnapshot.docs[0].data());
+      if (studentSnapshot.empty) {
+        setError('Student profile not found');
+        setLoading(false);
+        return;
       }
 
-      // Fetch recent results
-      const resultsRef = collection(db, 'results');
-      const resultsQuery = query(
-        resultsRef,
-        where('studentId', '==', user.uid),
-        orderBy('timestamp', 'desc'),
-        limit(3)
-      );
-      const resultsSnapshot = await getDocs(resultsQuery);
-      
-      const resultsData = resultsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        timestamp: doc.data().timestamp?.toDate().toLocaleString() || 'N/A'
-      }));
-      
-      setRecentResults(resultsData);
+      const studentData = studentSnapshot.docs[0].data();
+      setUserProfile(studentData);
       setLoading(false);
     } catch (err) {
       console.error('Error fetching profile:', err);
@@ -87,8 +70,7 @@ const Profile = () => {
   return (
     <Box sx={{ p: 2 }}>
       <Grid container spacing={2}>
-        {/* Profile Information */}
-        <Grid item xs={12} md={6}>
+        <Grid item xs={12}>
           <Paper sx={{ p: 2 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
               <Avatar 
@@ -126,44 +108,32 @@ const Profile = () => {
                   <strong>Year:</strong> {userProfile?.year || 'N/A'}
                 </Typography>
               </Grid>
+              <Grid item xs={12}>
+                <Typography variant="body2">
+                  <strong>Class:</strong> {userProfile?.class || 'N/A'}
+                </Typography>
+              </Grid>
+              <Grid item xs={12}>
+                <Typography variant="body2">
+                  <strong>Section:</strong> {userProfile?.section || 'N/A'}
+                </Typography>
+              </Grid>
+              <Grid item xs={12}>
+                <Typography variant="body2">
+                  <strong>Group:</strong> {userProfile?.group || 'N/A'}
+                </Typography>
+              </Grid>
+              <Grid item xs={12}>
+                <Typography variant="body2">
+                  <strong>Mobile:</strong> {userProfile?.mobileNumber || 'N/A'}
+                </Typography>
+              </Grid>
+              <Grid item xs={12}>
+                <Typography variant="body2">
+                  <strong>Aadhar:</strong> {userProfile?.adharNumber || 'N/A'}
+                </Typography>
+              </Grid>
             </Grid>
-          </Paper>
-        </Grid>
-
-        {/* Recent Results */}
-        <Grid item xs={12} md={6}>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="h6" gutterBottom>
-              Recent Test Results
-            </Typography>
-            {recentResults.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">
-                No test results available
-              </Typography>
-            ) : (
-              <List>
-                {recentResults.map((result) => (
-                  <React.Fragment key={result.id}>
-                    <ListItem>
-                      <ListItemText
-                        primary={result.examTitle}
-                        secondary={
-                          <Box>
-                            <Typography variant="body2" color="text.secondary">
-                              Score: {result.score}/{result.totalQuestions}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {result.timestamp}
-                            </Typography>
-                          </Box>
-                        }
-                      />
-                    </ListItem>
-                    <Divider />
-                  </React.Fragment>
-                ))}
-              </List>
-            )}
           </Paper>
         </Grid>
       </Grid>

@@ -14,6 +14,11 @@ import {
   CircularProgress,
   Alert,
   Divider,
+  TextField,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
@@ -25,7 +30,10 @@ import {
   collection,
   query,
   where,
-  getDocs
+  getDocs,
+  serverTimestamp,
+  runTransaction,
+  Timestamp
 } from 'firebase/firestore';
 import { auth, db } from '../../firebase/config';
 
@@ -40,6 +48,9 @@ function TakeExam({ examId, onComplete }) {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [showProgress, setShowProgress] = useState(false);
   const [attemptCount, setAttemptCount] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
     const fetchExamData = async () => {
@@ -86,9 +97,12 @@ function TakeExam({ examId, onComplete }) {
   }, [timeLeft, examStartTime, examSubmitted]);
 
   const handleAnswerChange = (questionIndex, value) => {
+    const question = examData.questions[questionIndex];
+    const processedValue = question.type === 'text_input' ? value.toLowerCase().trim() : value;
+    
     setAnswers(prev => ({
       ...prev,
-      [questionIndex]: value
+      [questionIndex]: processedValue
     }));
   };
 
@@ -104,58 +118,120 @@ function TakeExam({ examId, onComplete }) {
     }
   };
 
+  const handleConfirmSubmit = () => {
+    setConfirmDialogOpen(true);
+  };
+
+  const handleConfirmDialogClose = () => {
+    setConfirmDialogOpen(false);
+  };
+
+  const validateAnswers = () => {
+    const unansweredQuestions = examData.questions.filter((_, index) => !answers[index]);
+    if (unansweredQuestions.length > 0) {
+      setErrorMessage(`Please answer all questions. ${unansweredQuestions.length} questions remaining.`);
+      return false;
+    }
+    return true;
+  };
+
   const handleSubmit = async () => {
     try {
-      if (examSubmitted) return;
+      if (examSubmitted || isSubmitting) return;
+      
+      if (!validateAnswers()) return;
 
-      setExamSubmitted(true);
+      setIsSubmitting(true);
       const endTime = Date.now();
       const timeTaken = Math.floor((endTime - examStartTime) / 1000);
 
-      // Get student data for mobile number
-      const studentQuery = query(
-        collection(db, 'students'),
-        where('uid', '==', auth.currentUser.uid)
-      );
-      const studentSnapshot = await getDocs(studentQuery);
-      const student = studentSnapshot.docs[0].data();
-
-      // Calculate score
-      let score = 0;
-      examData.questions.forEach((question, index) => {
-        if (answers[index] === question.answer) {
-          score += question.points || 1;
+      const lockRef = doc(db, 'examLocks', `${examId}_${auth.currentUser.uid}`);
+      
+      await runTransaction(db, async (transaction) => {
+        const lockDoc = await transaction.get(lockRef);
+        if (lockDoc.exists()) {
+          throw new Error('Exam is already being submitted');
         }
+
+        const studentQuery = query(
+          collection(db, 'students'),
+          where('uid', '==', auth.currentUser.uid)
+        );
+        const studentSnapshot = await getDocs(studentQuery);
+        if (studentSnapshot.empty) {
+          throw new Error('Student data not found');
+        }
+        const student = studentSnapshot.docs[0].data();
+
+        let score = 0;
+        let totalPoints = 0;
+        
+        examData.questions.forEach((question, index) => {
+          const studentAnswer = answers[index];
+          if (!studentAnswer) {
+            throw new Error(`Missing answer for question ${index + 1}`);
+          }
+
+          const points = question.points || 1;
+          totalPoints += points;
+
+          const correctAnswer = question.type === 'text_input' 
+            ? question.answer.toLowerCase().trim()
+            : question.answer;
+
+          if (studentAnswer === correctAnswer) {
+            score += points;
+          }
+        });
+
+        if (totalPoints === 0) {
+          throw new Error('Invalid exam configuration: total points cannot be 0');
+        }
+
+        // Calculate percentage
+        const percentage = Math.round((score / totalPoints) * 100);
+
+        // Save result with proper timestamp
+        const resultData = {
+          examId,
+          studentId: student.mobileNumber,
+          studentName: student.name,
+          studentClass: student.class,
+          studentSection: student.section,
+          studentGroup: student.group,
+          answers,
+          score: percentage,
+          timeTaken,
+          submitTime: Timestamp.now(),  // Using Firestore Timestamp
+          examTitle: examData.title,
+        };
+
+        transaction.set(lockRef, {
+          timestamp: serverTimestamp(),
+          studentId: student.mobileNumber
+        });
+
+        await addDoc(collection(db, 'examResults'), resultData);
+
+        setExamSubmitted(true);
+        if (onComplete) {
+          onComplete();
+        }
+
       });
 
-      // Calculate percentage
-      const totalPoints = examData.questions.reduce(
-        (sum, question) => sum + (question.points || 1),
-        0
-      );
-      const percentage = Math.round((score / totalPoints) * 100);
-
-      // Save result
-      await addDoc(collection(db, 'exam_results'), {
-        examId,
-        studentId: student.mobileNumber,
-        studentName: student.name,
-        studentClass: student.class,
-        studentSection: student.section,
-        studentGroup: student.group,
-        answers,
-        score: percentage,
-        timeTaken,
-        submitTime: new Date(),
-        examTitle: examData.title,
-      });
-
-      if (onComplete) {
-        onComplete();
-      }
     } catch (error) {
       console.error('Error submitting exam:', error);
-      setError('Failed to submit exam');
+      setErrorMessage(error.message || 'Failed to submit exam. Please try again.');
+      
+      if (error.code === 'failed-precondition' || error.code === 'unavailable') {
+        setTimeout(() => {
+          setIsSubmitting(false);
+          handleSubmit();
+        }, 3000);
+      } else {
+        setIsSubmitting(false);
+      }
     }
   };
 
@@ -168,7 +244,6 @@ function TakeExam({ examId, onComplete }) {
         e.returnValue = '';
         setAttemptCount(prev => prev + 1);
         
-        // If this is the third attempt, submit the exam
         if (attemptCount === 2) {
           handleSubmit();
         }
@@ -188,7 +263,6 @@ function TakeExam({ examId, onComplete }) {
           setAttemptCount(prev => prev + 1);
           alert(`Warning: You have ${3 - attemptCount} attempts remaining before the exam is auto-submitted.`);
           
-          // If this is the third attempt, submit the exam
           if (attemptCount === 2) {
             handleSubmit();
           }
@@ -200,6 +274,72 @@ function TakeExam({ examId, onComplete }) {
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, [examSubmitted, attemptCount]);
+
+  const renderQuestionContent = () => {
+    if (!examData || !examData.questions || examData.questions.length === 0) return null;
+
+    const currentQuestion = examData.questions[currentQuestionIndex];
+    const currentAnswer = answers[currentQuestionIndex] || '';
+
+    return (
+      <Box sx={{ mb: 1.5 }}>
+        <Typography variant="caption" color="text.secondary" gutterBottom display="block">
+          Question {currentQuestionIndex + 1} of {examData.questions.length}
+        </Typography>
+        <Typography variant="body2" sx={{ mb: 1.5, fontWeight: 500, fontSize: '0.9rem' }}>
+          {currentQuestion.question}
+        </Typography>
+
+        {currentQuestion.type === 'text_input' ? (
+          <TextField
+            fullWidth
+            variant="outlined"
+            value={currentAnswer}
+            onChange={(e) => handleAnswerChange(currentQuestionIndex, e.target.value)}
+            disabled={examSubmitted}
+            placeholder="Type your answer here..."
+            size="small"
+            sx={{
+              mt: 1,
+              '& .MuiOutlinedInput-root': {
+                backgroundColor: 'background.paper',
+                fontSize: '0.9rem',
+              }
+            }}
+          />
+        ) : (
+          <RadioGroup
+            value={currentAnswer}
+            onChange={(e) => handleAnswerChange(currentQuestionIndex, e.target.value)}
+          >
+            <Grid container spacing={1}>
+              {currentQuestion.options.map((option, index) => (
+                <Grid item xs={12} key={index}>
+                  <FormControlLabel
+                    value={option}
+                    control={<Radio size="small" />}
+                    label={option}
+                    disabled={examSubmitted}
+                    sx={{
+                      width: '100%',
+                      m: 0,
+                      p: 0.75,
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      borderRadius: 1,
+                      '&:hover': {
+                        backgroundColor: 'action.hover',
+                      },
+                    }}
+                  />
+                </Grid>
+              ))}
+            </Grid>
+          </RadioGroup>
+        )}
+      </Box>
+    );
+  };
 
   return (
     <Box 
@@ -309,47 +449,7 @@ function TakeExam({ examId, onComplete }) {
                     height: '100%'
                   }}
                 >
-                  <Box sx={{ mb: 1.5 }}>
-                    <Typography variant="caption" color="text.secondary" gutterBottom display="block">
-                      Question {currentQuestionIndex + 1} of {examData.questions.length}
-                    </Typography>
-                    <Typography variant="body2" sx={{ mb: 1.5, fontWeight: 500, fontSize: '0.9rem' }}>
-                      {examData.questions[currentQuestionIndex].question}
-                    </Typography>
-
-                    <RadioGroup
-                      value={answers[currentQuestionIndex] || ''}
-                      onChange={(e) => handleAnswerChange(currentQuestionIndex, e.target.value)}
-                    >
-                      <Grid container spacing={1}>
-                        {examData.questions[currentQuestionIndex].options.map((option, index) => (
-                          <Grid item xs={12} key={index}>
-                            <FormControlLabel
-                              value={option}
-                              control={<Radio size="small" />}
-                              label={
-                                <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
-                                  {option}
-                                </Typography>
-                              }
-                              sx={{
-                                width: '100%',
-                                m: 0,
-                                p: 0.75,
-                                border: '1px solid',
-                                borderColor: 'divider',
-                                borderRadius: 1,
-                                '&:hover': {
-                                  backgroundColor: 'action.hover',
-                                },
-                              }}
-                            />
-                          </Grid>
-                        ))}
-                      </Grid>
-                    </RadioGroup>
-                  </Box>
-
+                  {renderQuestionContent()}
                   <Box sx={{ 
                     display: 'flex', 
                     justifyContent: 'space-between', 
@@ -371,11 +471,11 @@ function TakeExam({ examId, onComplete }) {
                         size="small"
                         variant="contained"
                         color="primary"
-                        onClick={handleSubmit}
+                        onClick={handleConfirmSubmit}
                         disabled={examSubmitted || !allQuestionsAnswered}
                         sx={{ fontSize: '0.8rem', py: 0.5 }}
                       >
-                        Submit
+                        Submit Exam
                       </Button>
                     ) : (
                       <Button
@@ -483,6 +583,35 @@ function TakeExam({ examId, onComplete }) {
           </>
         )}
       </Container>
+
+      {errorMessage && (
+        <Alert severity="error" sx={{ mt: 2, mb: 2 }}>
+          {errorMessage}
+        </Alert>
+      )}
+
+      <Dialog
+        open={confirmDialogOpen}
+        onClose={handleConfirmDialogClose}
+      >
+        <DialogTitle>Submit Exam</DialogTitle>
+        <DialogContent>
+          Are you sure you want to submit your exam? This action cannot be undone.
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleConfirmDialogClose}>Cancel</Button>
+          <Button 
+            onClick={() => {
+              handleConfirmDialogClose();
+              handleSubmit();
+            }} 
+            color="primary"
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? 'Submitting...' : 'Submit'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

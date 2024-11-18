@@ -14,7 +14,8 @@ import {
   Alert,
   Chip,
   Grid,
-  TextField
+  TextField,
+  MenuItem
 } from '@mui/material';
 import { collection, query, getDocs, orderBy, where } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -57,8 +58,8 @@ const Results = () => {
 
       // Get all results from both active and completed exams
       const resultsPromises = [
-        // Get results from exam_results collection
-        getDocs(query(collection(db, 'exam_results'), orderBy('timestamp', 'desc'))),
+        // Get results from examResults collection (active exams)
+        getDocs(query(collection(db, 'examResults'), orderBy('timestamp', 'desc'))),
         // Get results from results collection (completed exams)
         getDocs(query(collection(db, 'results'), orderBy('timestamp', 'desc')))
       ];
@@ -75,16 +76,32 @@ const Results = () => {
         const data = doc.data();
         console.log('Processing result for exam:', data.examId);
         
-        // Get student details
+        // Get student details using both uid and mobile number
         let studentName = 'Unknown';
         try {
           const usersRef = collection(db, 'users');
-          const userQuery = query(usersRef, where('uid', '==', data.studentId));
+          const userQuery = query(usersRef, 
+            where('uid', '==', data.studentId)
+          );
           const userSnapshot = await getDocs(userQuery);
+          
           if (!userSnapshot.empty) {
             const userData = userSnapshot.docs[0].data();
             studentName = userData.name || userData.email || 'Unknown';
             console.log('Found student:', studentName);
+          } else {
+            // Try finding by mobile number as fallback
+            const studentRef = collection(db, 'students');
+            const studentQuery = query(studentRef, 
+              where('mobileNumber', '==', data.studentId)
+            );
+            const studentSnapshot = await getDocs(studentQuery);
+            
+            if (!studentSnapshot.empty) {
+              const studentData = studentSnapshot.docs[0].data();
+              studentName = studentData.name || 'Unknown';
+              console.log('Found student by mobile:', studentName);
+            }
           }
         } catch (err) {
           console.error('Error fetching student details:', err);
