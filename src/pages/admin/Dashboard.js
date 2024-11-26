@@ -17,6 +17,7 @@ import { auth } from '../../firebase/config';
 import AddStudent from '../../components/admin/AddStudent';
 import ManageExams from '../../components/admin/ManageExams';
 import ViewStudents from '../../components/admin/ViewStudents';
+import NotificationGenerator from '../../components/admin/NotificationGenerator';
 
 function Dashboard() {
   const [tab, setTab] = useState(0);
@@ -49,16 +50,27 @@ function Dashboard() {
       </AppBar>
 
       <Container maxWidth="lg" sx={{ mt: 4 }}>
-        <Paper elevation={3} sx={{ p: 3 }}>
-          <Tabs value={tab} onChange={handleTabChange} centered sx={{ mb: 3 }}>
+        <Paper sx={{ width: '100%', mb: 2 }}>
+          <Tabs
+            value={tab}
+            onChange={handleTabChange}
+            indicatorColor="primary"
+            textColor="primary"
+            variant="scrollable"
+            scrollButtons="auto"
+          >
             <Tab label="Add Student" />
-            <Tab label="Manage Exams" />
             <Tab label="View Students" />
+            <Tab label="Manage Exams" />
+            <Tab label="Notifications" />
           </Tabs>
 
-          {tab === 0 && <AddStudent />}
-          {tab === 1 && <ManageExams />}
-          {tab === 2 && <ViewStudents />}
+          <Box sx={{ p: 3 }}>
+            {tab === 0 && <AddStudent />}
+            {tab === 1 && <ViewStudents />}
+            {tab === 2 && <ManageExams />}
+            {tab === 3 && <NotificationGenerator />}
+          </Box>
         </Paper>
       </Container>
     </Box>

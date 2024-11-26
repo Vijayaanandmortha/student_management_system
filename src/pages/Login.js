@@ -16,12 +16,14 @@ import { useNavigate } from 'react-router-dom';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth, db } from '../firebase/config';
 import { collection, query, where, getDocs } from 'firebase/firestore';
+import StudentRegistration from '../components/student/StudentRegistration';
 
 function Login() {
   const [tab, setTab] = useState(1); // Default to student login (index 1)
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
   const navigate = useNavigate();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -151,8 +153,21 @@ function Login() {
               {tab === 0 ? "Admin Login" : "Student Login"}
             </Button>
           </form>
+          <Box sx={{ mb: 2 }}>
+            <Button
+              fullWidth
+              variant="text"
+              onClick={() => setIsRegistering(true)}
+            >
+              New Student? Register here
+            </Button>
+          </Box>
         </Paper>
       </Box>
+      <StudentRegistration
+        open={isRegistering}
+        onClose={() => setIsRegistering(false)}
+      />
     </Container>
   );
 }

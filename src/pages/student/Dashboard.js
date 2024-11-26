@@ -38,6 +38,8 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import CancelIcon from '@mui/icons-material/Cancel';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import NotificationsIcon from '@mui/icons-material/Notifications';
+import NotificationViewer from '../../components/student/NotificationViewer';
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -271,6 +273,7 @@ function Dashboard() {
   const navigationItems = [
     { text: 'Exams', icon: <HomeIcon />, path: '/student' },
     { text: 'Profile', icon: <PersonIcon />, path: '/student/profile' },
+    { text: 'Notifications', icon: <NotificationsIcon />, path: '/student/notifications' },
   ];
 
   const drawer = (
@@ -488,6 +491,7 @@ function Dashboard() {
           path="/profile"
           element={<StudentProfile studentData={studentData} />}
         />
+        <Route path="/notifications" element={<NotificationViewer />} />
       </Routes>
 
       {/* Preview Dialog */}
